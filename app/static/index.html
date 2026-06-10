@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>量化交易风控平台</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", Arial, sans-serif; }
+    body { margin: 0; background: #f6f7f9; color: #1f2933; }
+    header { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: #172033; color: #fff; }
+    main { max-width: 1180px; margin: 0 auto; padding: 22px; display: grid; gap: 18px; }
+    section { background: #fff; border: 1px solid #dfe3e8; border-radius: 8px; padding: 16px; }
+    h1 { font-size: 18px; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    label { display: grid; gap: 6px; font-size: 13px; color: #52606d; }
+    input, select, button { height: 36px; border: 1px solid #cbd2d9; border-radius: 6px; padding: 0 10px; font-size: 14px; }
+    button { cursor: pointer; background: #1f6feb; border-color: #1f6feb; color: #fff; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    button.secondary { background: #fff; color: #1f2933; border-color: #cbd2d9; }
+    button.danger { background: #c52727; border-color: #c52727; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; align-items: end; }
+    .login { max-width: 360px; margin: 80px auto; display: grid; gap: 12px; }
+    .bar { display: flex; gap: 10px; align-items: center; }
+    .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .muted { color: #6b7280; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #edf0f2; padding: 9px; text-align: left; white-space: nowrap; }
+    th { color: #52606d; background: #fafafa; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .hidden { display: none; }
+    .status { min-height: 20px; color: #9a3412; font-size: 13px; }
+    @media (max-width: 840px) { .grid, .two { grid-template-columns: 1fr; } table { display: block; overflow-x: auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>量化交易风控平台</h1>
+    <div class="bar"><span id="userLabel"></span><button class="secondary" onclick="logout()">退出</button></div>
+  </header>
+
+  <section id="loginBox" class="login">
+    <h2>登录</h2>
+    <label>用户
+      <select id="username"><option>trader_a</option><option>trader_b</option></select>
+    </label>
+    <label>密码
+      <input id="password" type="password" value="password_a">
+    </label>
+    <button onclick="login()">登录</button>
+    <div class="muted">默认账号：trader_a/password_a，trader_b/password_b</div>
+    <div id="loginStatus" class="status"></div>
+  </section>
+
+  <main id="appBox" class="hidden">
+    <section>
+      <h2>提交委托</h2>
+      <div class="grid">
+        <label>合约 <select id="instrument"></select></label>
+        <label>方向 <select id="side"><option value="kBuy">买入</option><option value="kSell">卖出</option></select></label>
+        <label>价格 <input id="price" type="number" value="3500" min="0" step="0.01"></label>
+        <label>数量 <input id="volume" type="number" value="1" min="1"></label>
+      </div>
+      <p><button onclick="submitOrder()">提交下单指令</button></p>
+      <div id="actionStatus" class="status"></div>
+    </section>
+
+    <section>
+      <h2>测试场景</h2>
+      <div class="actions">
+        <button class="secondary" onclick="seedDemoScenarios()">载入全部测试场景</button>
+        <span class="muted" id="demoSummary"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>待我复核</h2>
+      <table><thead><tr><th>ID</th><th>类型</th><th>提交人</th><th>合约/订单</th><th>方向</th><th>价格</th><th>数量</th><th>操作</th></tr></thead><tbody id="pendingBody"></tbody></table>
+    </section>
+
+    <section>
+      <h2>指令流水</h2>
+      <table><thead><tr><th>ID</th><th>类型</th><th>状态</th><th>提交人</th><th>复核人</th><th>合约/订单</th><th>价格</th><th>数量</th><th>风控结果</th></tr></thead><tbody id="instructionsBody"></tbody></table>
+    </section>
+
+    <section>
+      <h2>订单</h2>
+      <table><thead><tr><th>订单号</th><th>合约</th><th>方向</th><th>价格</th><th>数量</th><th>成交</th><th>撤单</th><th>状态</th><th>操作</th></tr></thead><tbody id="ordersBody"></tbody></table>
+    </section>
+
+    <section>
+      <h2>仓位</h2>
+      <table><thead><tr><th>合约</th><th>买入成交</th><th>卖出成交</th><th>净持仓</th><th>成交额</th></tr></thead><tbody id="positionsBody"></tbody></table>
+    </section>
+  </main>
+
+  <script>
+    let token = localStorage.getItem("token");
+    let currentUser = JSON.parse(localStorage.getItem("user") || "null");
+    let ws;
+
+    function authHeaders() { return { "Authorization": "Bearer " + token, "Content-Type": "application/json" }; }
+
+    async function api(path, options = {}) {
+      const resp = await fetch(path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
+      if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+      return resp.json();
+    }
+
+    async function login() {
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+      try {
+        const resp = await fetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        if (!resp.ok) throw new Error((await resp.json()).detail);
+        const data = await resp.json();
+        token = data.access_token;
+        currentUser = data.user;
+        localStorage.setItem("token", token);
+        localStorage.setItem("user", JSON.stringify(currentUser));
+        boot();
+      } catch (err) {
+        document.getElementById("loginStatus").textContent = err.message;
+      }
+    }
+
+    function logout() {
+      localStorage.clear();
+      token = null;
+      location.reload();
+    }
+
+    async function submitOrder() {
+      try {
+        await api("/instructions/orders", {
+          method: "POST",
+          body: JSON.stringify({
+            instrument_id: document.getElementById("instrument").value,
+            side: document.getElementById("side").value,
+            price: Number(document.getElementById("price").value),
+            volume: Number(document.getElementById("volume").value)
+          })
+        });
+        document.getElementById("actionStatus").textContent = "下单指令已提交，等待另一名交易员复核";
+        refreshAll();
+      } catch (err) { document.getElementById("actionStatus").textContent = err.message; }
+    }
+
+    async function submitCancel(orderId) {
+      try {
+        document.getElementById("actionStatus").textContent = "正在提交撤单指令...";
+        const instruction = await api("/instructions/cancel", { method: "POST", body: JSON.stringify({ order_id: orderId }) });
+        document.getElementById("actionStatus").textContent = `撤单指令 #${instruction.id} 已提交，等待另一名交易员复核`;
+        await refreshAll();
+      } catch (err) { document.getElementById("actionStatus").textContent = err.message; }
+    }
+
+    async function review(id, decision) {
+      try {
+        await api(`/instructions/${id}/review`, { method: "POST", body: JSON.stringify({ decision }) });
+        refreshAll();
+      } catch (err) { document.getElementById("actionStatus").textContent = err.message; }
+    }
+
+    async function seedDemoScenarios() {
+      try {
+        const summary = await api("/demo/scenarios", { method: "POST" });
+        document.getElementById("demoSummary").textContent =
+          `已载入：${summary.orders} 笔订单，${summary.instructions} 条指令，${summary.events} 条回报，${summary.trades} 条成交`;
+        document.getElementById("actionStatus").textContent = "全部测试场景已反映到系统页面";
+        refreshAll();
+      } catch (err) { document.getElementById("actionStatus").textContent = err.message; }
+    }
+
+    async function loadInstruments() {
+      const instruments = await api("/instruments");
+      const select = document.getElementById("instrument");
+      select.innerHTML = instruments.map(x => `<option value="${x}">${x}</option>`).join("");
+    }
+
+    async function refreshAll() {
+      if (!token) return;
+      const [pending, instructions, orders, positions] = await Promise.all([
+        api("/instructions/pending"), api("/instructions"), api("/orders"), api("/positions")
+      ]);
+      renderPending(pending);
+      renderInstructions(instructions);
+      renderOrders(orders);
+      renderPositions(positions);
+    }
+
+    function renderPending(items) {
+      document.getElementById("pendingBody").innerHTML = items.map(x => `
+        <tr>
+          <td>${x.id}</td><td>${x.type}</td><td>${x.submitter_username}</td>
+          <td>${x.instrument_id || x.order_id || ""}</td><td>${x.side || ""}</td>
+          <td>${x.price || ""}</td><td>${x.volume || ""}</td>
+          <td><button onclick="review(${x.id}, 'Approved')">通过</button> <button class="danger" onclick="review(${x.id}, 'Rejected')">拒绝</button></td>
+        </tr>`).join("");
+    }
+
+    function renderInstructions(items) {
+      document.getElementById("instructionsBody").innerHTML = items.map(x => {
+        const target = x.instrument_id || x.order_id || "";
+        const risk = x.risk_error_code ? `${x.risk_error_code}: ${x.risk_error_message || ""}` : "";
+        return `<tr>
+          <td>${x.id}</td><td>${x.type}</td><td>${x.status}</td>
+          <td>${x.submitter_username || ""}</td><td>${x.reviewer_username || ""}</td>
+          <td>${target}</td><td>${x.price || ""}</td><td>${x.volume || ""}</td><td>${risk}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    function renderOrders(items) {
+      document.getElementById("ordersBody").innerHTML = items.map(x => {
+        const open = !["kRejected", "kAllTraded", "kCanceled"].includes(x.status);
+        const confirmed = Number(x.exchange_accepted) === 1 || Number(x.traded_volume) > 0;
+        const cancelAction = renderCancelAction(x, open, confirmed);
+        return `<tr>
+          <td>${x.order_id}</td><td>${x.instrument_id}</td><td>${x.side}</td><td>${x.price}</td>
+          <td>${x.original_volume}</td><td>${x.traded_volume}</td><td>${x.canceled_volume}</td><td>${x.status}</td>
+          <td>${cancelAction}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    function renderCancelAction(order, open, confirmed) {
+      if (!open) return "";
+      if (!confirmed) return `<button class="secondary" disabled title="订单尚未被交易所确认">待确认</button>`;
+
+      if (order.cancel_instruction_status === "PendingReview") {
+        return `<button class="secondary" disabled title="撤单指令 #${order.cancel_instruction_id} 等待另一名交易员复核">撤单待复核</button>`;
+      }
+      if (order.cancel_instruction_status === "Sent") {
+        return `<button class="secondary" disabled title="撤单请求已发送交易所，等待撤单回报">撤单已发送</button>`;
+      }
+      if (order.cancel_instruction_status === "RiskRejected") {
+        const reason = order.cancel_risk_error_message || "撤单风控拒绝";
+        return `<button class="secondary" onclick="submitCancel('${order.order_id}')" title="上次撤单被拒：${reason}">重试撤单</button>`;
+      }
+      return `<button class="secondary" onclick="submitCancel('${order.order_id}')">撤单</button>`;
+    }
+
+    function renderPositions(items) {
+      document.getElementById("positionsBody").innerHTML = items.map(x => `
+        <tr><td>${x.instrument_id}</td><td>${x.buy_volume}</td><td>${x.sell_volume}</td><td>${x.net_position}</td><td>${Number(x.turnover).toFixed(2)}</td></tr>
+      `).join("");
+    }
+
+    function connectWs() {
+      ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+      ws.onmessage = () => refreshAll();
+      ws.onclose = () => setTimeout(connectWs, 1500);
+    }
+
+    function boot() {
+      if (!token) return;
+      document.getElementById("loginBox").classList.add("hidden");
+      document.getElementById("appBox").classList.remove("hidden");
+      document.getElementById("userLabel").textContent = currentUser.username;
+      document.getElementById("password").value = currentUser.username === "trader_b" ? "password_b" : "password_a";
+      loadInstruments();
+      refreshAll();
+      connectWs();
+      setInterval(refreshAll, 5000);
+    }
+
+    document.getElementById("username").addEventListener("change", (e) => {
+      document.getElementById("password").value = e.target.value === "trader_b" ? "password_b" : "password_a";
+    });
+    boot();
+  </script>
+</body>
+</html>
