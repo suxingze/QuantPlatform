@@ -64,8 +64,6 @@ def seed_all_demo_scenarios(conn: sqlite3.Connection, *, reset: bool = True) -> 
             message=f"demo scenario {order_id}",
         )
 
-    new_unconfirmed = create_order()
-
     rejected = create_order()
     manager.apply_event(event(rejected, OrderStatus.REJECTED, suffix="reject"))
 
@@ -134,7 +132,7 @@ def seed_all_demo_scenarios(conn: sqlite3.Connection, *, reset: bool = True) -> 
         ("order", "OPEN_ORDER_LIMIT", "未完结订单数超过 2", None, 3500, 1),
         ("order", "TURNOVER_LIMIT", "每分钟成交额超过 100000", None, 3500, 1),
         ("cancel", "ORDER_NOT_FOUND", "订单不存在", "missing-order", None, None),
-        ("cancel", "ORDER_NOT_CONFIRMED", "订单尚未被交易所确认", new_unconfirmed, None, None),
+        ("cancel", "ORDER_NOT_CONFIRMED", "订单尚未被交易所确认", "ord-unconfirmed-sample", None, None),
         ("cancel", "ORDER_TERMINAL", "终态订单不允许撤单", rejected, None, None),
         ("cancel", "CANCEL_DEBOUNCE", "同一订单 1 秒内不允许重复撤单", cancel_sent, None, None),
     ]

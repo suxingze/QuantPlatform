@@ -201,7 +201,7 @@ def test_demo_scenarios_are_visible_in_system_views():
 
     seeded = client.post("/demo/scenarios", headers=headers)
     assert seeded.status_code == 200
-    assert seeded.json()["orders"] >= 10
+    assert seeded.json()["orders"] >= 9
     assert seeded.json()["instructions"] >= 10
 
     orders = client.get("/orders", headers=headers).json()
@@ -212,7 +212,8 @@ def test_demo_scenarios_are_visible_in_system_views():
     risk_codes = {item["risk_error_code"] for item in instructions if item["risk_error_code"]}
     order_ids = {order["order_id"] for order in orders}
 
-    assert {"kUnconfirmed", "kRejected", "kQueueing", "kAllTraded", "kCanceled"} <= statuses
+    assert {"kRejected", "kQueueing", "kAllTraded", "kCanceled"} <= statuses
+    assert "kUnconfirmed" not in statuses
     assert {
         "PRICE_INVALID",
         "PRICE_OUT_OF_RANGE",
